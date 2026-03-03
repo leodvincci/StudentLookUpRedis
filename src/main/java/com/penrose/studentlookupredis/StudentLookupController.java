@@ -2,14 +2,11 @@ package com.penrose.studentlookupredis;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@Controller
+@RestController
 public class StudentLookupController {
 
   private final StudentLookupService studentLookupService;
@@ -18,7 +15,7 @@ public class StudentLookupController {
     this.studentLookupService = studentLookupService;
   }
 
-  @PostMapping("/students")
+  @PostMapping("/student")
   public ResponseEntity<Student> createStudent(@RequestBody Student student) {
     studentLookupService.createStudent(student);
     return ResponseEntity.ok(student);
