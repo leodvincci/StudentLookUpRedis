@@ -77,25 +77,211 @@ The application starts on **http://localhost:8080**.
 
 ### Create a Student
 
+**Request:**
 ```bash
 curl -X POST http://localhost:8080/students \
   -H "Content-Type: application/json" \
   -d '{"firstName": "John", "lastName": "Doe", "collegeMajor": "Computer Science"}'
 ```
 
+**Response:** `200 OK`
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "firstName": "John",
+  "lastName": "Doe",
+  "collegeMajor": "Computer Science"
+}
+```
+
+**Application logs:**
+```
+INFO  StudentLookupRedisAdapter : Created new student with ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890 and cached with key: student:a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+---
+
+### Get Student by ID (cache miss — first request)
+
+**Request:**
+```bash
+curl http://localhost:8080/student/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+**Response:** `200 OK`
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "firstName": "John",
+  "lastName": "Doe",
+  "collegeMajor": "Computer Science"
+}
+```
+
+**Application logs (cache miss):**
+```
+INFO  StudentLookupRedisAdapter : Cache miss for key: student:a1b2c3d4-e5f6-7890-abcd-ef1234567890
+INFO  StudentLookupRedisAdapter : Queried database for student with ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Hibernate: select s1_0.id,s1_0.college_major,s1_0.first_name,s1_0.last_name from student s1_0 where s1_0.id=?
+INFO  StudentLookupRedisAdapter : Cached student with key: student:a1b2c3d4-e5f6-7890-abcd-ef1234567890 for 120 seconds
+INFO  StudentLookupService      : Student found: John Doe
+```
+
+### Get Student by ID (cache hit — subsequent request)
+
+**Request:**
+```bash
+curl http://localhost:8080/student/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+**Response:** `200 OK` (same as above)
+
+**Application logs (cache hit — no SQL query):**
+```
+INFO  StudentLookupRedisAdapter : Cache hit for key: student:a1b2c3d4-e5f6-7890-abcd-ef1234567890
+INFO  StudentLookupService      : Student found: John Doe
+```
+
+Notice there is no `Hibernate: select ...` log — the response came entirely from Redis.
+
+### Get Student by ID (not found)
+
+**Request:**
+```bash
+curl http://localhost:8080/student/nonexistent-id
+```
+
+**Response:** `404 Not Found` (empty body)
+
+**Application logs:**
+```
+INFO  StudentLookupRedisAdapter : Cache miss for key: student:nonexistent-id
+INFO  StudentLookupRedisAdapter : Queried database for student with ID: nonexistent-id
+Hibernate: select s1_0.id,s1_0.college_major,s1_0.first_name,s1_0.last_name from student s1_0 where s1_0.id=?
+WARN  StudentLookupService      : Student with ID nonexistent-id not found
+```
+
+---
+
 ### Get All Students
 
+**Request:**
 ```bash
 curl http://localhost:8080/students
 ```
 
-### Get Student by ID
-
-```bash
-curl http://localhost:8080/student/{id}
+**Response:** `200 OK`
+```json
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "firstName": "John",
+    "lastName": "Doe",
+    "collegeMajor": "Computer Science"
+  },
+  {
+    "id": "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
+    "firstName": "Jane",
+    "lastName": "Smith",
+    "collegeMajor": "Mathematics"
+  }
+]
 ```
 
-On the first call, you'll see a cache miss in the logs (fetches from H2, then caches in Redis). Subsequent calls within the TTL window return from cache directly.
+**Application logs:**
+```
+Hibernate: select s1_0.id,s1_0.college_major,s1_0.first_name,s1_0.last_name from student s1_0
+INFO  StudentLookupService : Retrieved 2 students
+```
+
+> **Note:** `GET /students` always queries the database directly — list endpoints bypass the cache.
+
+## Key Code Examples
+
+### Cache-Aside Read Pattern (RedisAdapter)
+
+```java
+public Optional<Student> findById(String id) {
+    String key = KEY_PREFIX + id;
+
+    // 1. Check cache first
+    String json = redis.opsForValue().get(key);
+
+    if (json != null) {
+        log.info("Cache hit for key: {}", key);
+        return Optional.of(mapper.readValue(json, Student.class));
+    }
+
+    // 2. Cache miss — query the database
+    log.info("Cache miss for key: {}", key);
+    Optional<Student> studentFromDb = studentLookupRepo.findById(id);
+
+    // 3. Populate cache for next time
+    studentFromDb.ifPresent(student -> {
+        redis.opsForValue().set(key, mapper.writeValueAsString(student), ttl);
+        log.info("Cached student with key: {} for {} seconds", key, ttl.getSeconds());
+    });
+
+    return studentFromDb;
+}
+```
+
+### Write-Through Pattern (RedisAdapter)
+
+```java
+public void createNewStudent(Student student) {
+    // 1. Write to database
+    studentLookupRepo.save(student);
+
+    // 2. Write to cache so subsequent reads are instant hits
+    String key = KEY_PREFIX + student.getId();
+    redis.opsForValue().set(key, mapper.writeValueAsString(student), ttl);
+    log.info("Created new student with ID: {} and cached with key: {}", student.getId(), key);
+}
+```
+
+### Student Entity
+
+```java
+@Entity
+public class Student {
+    @Id
+    private String id;
+    private String firstName;
+    private String lastName;
+    private String collegeMajor;
+
+    public Student(String firstName, String lastName, String collegeMajor) {
+        this.id = String.valueOf(UUID.randomUUID());
+        this.firstName = firstName;
+        this.lastName = lastName;
+        this.collegeMajor = collegeMajor;
+    }
+}
+```
+
+## Caching Flow Summary
+
+```
+GET /student/{id}
+        │
+        ▼
+  ┌──────────┐     hit     ┌───────────┐
+  │  Redis   │ ──────────→ │  Return   │
+  │  lookup  │             │  cached   │
+  └──────────┘             └───────────┘
+        │ miss
+        ▼
+  ┌──────────┐             ┌───────────┐
+  │  Query   │ ──────────→ │  Cache in │
+  │  H2 DB   │             │  Redis    │
+  └──────────┘             └───────────┘
+        │                        │
+        ▼                        ▼
+  ┌──────────────────────────────────┐
+  │         Return to client         │
+  └──────────────────────────────────┘
+```
 
 ## H2 Console
 
