@@ -10,13 +10,13 @@ public class StudentLookupService {
     private final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(StudentLookupService.class);
     private final StudentLookupRedisAdapter redis;
 
-    public StudentLookupService(StudentLookupRepo studentLookupRepo, StudentLookupRedisAdapter studentLookupRedisAdapter, StudentLookupRedisAdapter redis) {
+    public StudentLookupService(StudentLookupRepo studentLookupRepo, StudentLookupRedisAdapter redis) {
         this.studentLookupRepo = studentLookupRepo;
         this.redis = redis;
     }
 
     public void createStudent(Student student) {
-        Student newStudent = new Student(student.getId(), student.getFirstName(), student.getLastName(), student.getCollegeMajor());
+        Student newStudent = new Student(student.getFirstName(), student.getLastName(), student.getCollegeMajor());
         redis.createNewStudent(newStudent);
     }
 
