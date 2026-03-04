@@ -1,5 +1,8 @@
 # StudentLookUpRedis
 
+<img width="1631" height="194" alt="image" src="https://github.com/user-attachments/assets/95a64a7b-f9fd-4c4c-afd8-0c28b8246e03" />
+
+
 A Spring Boot REST API for managing student records, using **Redis** as a caching layer in front of an **H2** in-memory database. Demonstrates the **cache-aside** (lazy-loading) and **write-through** caching patterns.
 
 ## Architecture
