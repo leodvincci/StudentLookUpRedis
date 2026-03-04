@@ -57,6 +57,12 @@ brew services start redis
 docker run -d --name redis -p 6379:6379 redis
 ```
 
+**Docker Compose (recommended):**
+```bash
+docker-compose up -d
+```
+This starts a Redis 7 container with a built-in health check.
+
 Verify Redis is running:
 ```bash
 redis-cli ping
